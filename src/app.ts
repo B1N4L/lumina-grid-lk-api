@@ -2,6 +2,7 @@ import express, { Express } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { env } from './config/environment.js';
+import healthRoutes from './routes/health.routes.js';
 
 export function createApp(): Express {
   const app = express();
@@ -27,6 +28,9 @@ export function createApp(): Express {
       },
     });
   });
+
+  // API v1 Routes
+  app.use(env.API_PREFIX, healthRoutes);
 
   return app;
 }
