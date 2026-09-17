@@ -81,8 +81,12 @@ export async function runMasterSeed(): Promise<void> {
 }
 
 // Execute directly when run as CLI script
-if (process.argv[1]?.includes('seeds/index')) {
+if (process.argv[1] && /seeds[/\\]index(\.ts)?$/.test(process.argv[1])) {
   runMasterSeed()
     .then(() => process.exit(0))
-    .catch(() => process.exit(1));
+    .catch((err) => {
+      console.error(err);
+      process.exit(1);
+    });
 }
+
