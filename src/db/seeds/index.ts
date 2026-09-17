@@ -8,7 +8,8 @@ import { users } from '../schema/users.js';
 import { provincesData } from './data/provinces.data.js';
 import { districtsData } from './data/districts.data.js';
 import { gridSubstationsData } from './data/grid-substations.data.js';
-import { generateInstallations } from './generators/installations-generator.js';
+import { defaultUsersData, DEFAULT_PASSWORD_PLAIN } from './data/users.data.js';
+import { generateInstallations, knownDeviceCredentials } from './generators/installations-generator.js';
 import { seedGenerationReadings } from './generators/readings-batcher.js';
 import { logger } from '../../config/logger.js';
 
@@ -49,9 +50,30 @@ export async function runMasterSeed(): Promise<void> {
       daysOfHistory: 7,
     });
 
+    // 7. Seed Default SLSEA Users (National, Provincial, District tiers)
+    logger.info(`👥 Seeding ${defaultUsersData.length} default SLSEA users across jurisdiction tiers...`);
+    await db.insert(users).values(defaultUsersData);
+
     const totalDuration = +((Date.now() - overallStart) / 1000).toFixed(2);
+    logger.info('===============================================================');
     logger.info(`✨ Master seed pipeline completed successfully in ${totalDuration}s!`);
-    logger.info(`📊 Summary: 9 Provinces, 25 Districts, ${gridSubstationsData.length} Substations, ${installations.length} Installations, ${totalReadings.toLocaleString()} Readings`);
+    logger.info(`📊 Summary Statistics:`);
+    logger.info(`   - Provinces:             ${provincesData.length}`);
+    logger.info(`   - Districts:             ${districtsData.length}`);
+    logger.info(`   - Grid Substations:      ${gridSubstationsData.length}`);
+    logger.info(`   - Solar Installations:   ${installations.length}`);
+    logger.info(`   - Generation Readings:   ${totalReadings.toLocaleString()}`);
+    logger.info(`   - Users Configured:      ${defaultUsersData.length}`);
+    logger.info(`🔑 Test Login Credentials (Password: "${DEFAULT_PASSWORD_PLAIN}"):`);
+    logger.info(`   - National Admin:        admin@slsea.gov.lk`);
+    logger.info(`   - Provincial Analyst:    analyst.western@slsea.gov.lk (WP)`);
+    logger.info(`   - District Operator:     operator.colombo@slsea.gov.lk (Colombo)`);
+    if (knownDeviceCredentials[0]) {
+      logger.info(`🔌 Sample Write Device Key:`);
+      logger.info(`   - Installation ID:       ${knownDeviceCredentials[0].installationId}`);
+      logger.info(`   - X-Device-Key:          ${knownDeviceCredentials[0].rawApiKey}`);
+    }
+    logger.info('===============================================================');
   } catch (error) {
     logger.error({ err: error }, '❌ Fatal error occurred during seed execution');
     throw error;
