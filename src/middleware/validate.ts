@@ -13,10 +13,30 @@ export function validate(schemas: ValidationTargets) {
   return async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
     try {
       if (schemas.params) {
-        req.params = (await schemas.params.parseAsync(req.params)) as typeof req.params;
+        const parsedParams = await schemas.params.parseAsync(req.params);
+        try {
+          req.params = parsedParams as typeof req.params;
+        } catch {
+          Object.defineProperty(req, 'params', {
+            value: parsedParams,
+            writable: true,
+            configurable: true,
+            enumerable: true,
+          });
+        }
       }
       if (schemas.query) {
-        req.query = (await schemas.query.parseAsync(req.query)) as typeof req.query;
+        const parsedQuery = await schemas.query.parseAsync(req.query);
+        try {
+          req.query = parsedQuery as typeof req.query;
+        } catch {
+          Object.defineProperty(req, 'query', {
+            value: parsedQuery,
+            writable: true,
+            configurable: true,
+            enumerable: true,
+          });
+        }
       }
       if (schemas.body) {
         req.body = await schemas.body.parseAsync(req.body);
