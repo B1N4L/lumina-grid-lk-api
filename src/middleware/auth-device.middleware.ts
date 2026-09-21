@@ -29,6 +29,7 @@ export async function authenticateDevice(
         meterId: solarInstallations.meterId,
         name: solarInstallations.name,
         status: solarInstallations.status,
+        installedCapacityKw: solarInstallations.installedCapacityKw,
       })
       .from(solarInstallations)
       .where(eq(solarInstallations.apiKeyHash, keyHash))
@@ -57,6 +58,7 @@ export async function authenticateDevice(
       installationId: installation.id,
       meterId: installation.meterId,
       name: installation.name,
+      installedCapacityKw: parseFloat(installation.installedCapacityKw),
     };
 
     next();
