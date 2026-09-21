@@ -1,10 +1,12 @@
 export type UserRole = 'national_admin' | 'provincial_analyst' | 'district_operator';
+export type UserStatus = 'active' | 'suspended' | 'deleted';
 
 export interface UserTokenPayload {
   sub: string; // user id (UUID)
   email: string;
   role: UserRole;
   fullName: string;
+  status?: UserStatus;
   jurisdictionProvinceId: string | null;
   jurisdictionDistrictId: string | null;
 }
