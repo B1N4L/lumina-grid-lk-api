@@ -3,6 +3,9 @@ import cors from 'cors';
 import helmet from 'helmet';
 import { env } from './config/environment.js';
 import healthRoutes from './routes/health.routes.js';
+import { notFoundHandler } from './middleware/not-found.middleware.js';
+import { errorHandler } from './middleware/error.middleware.js';
+import { contentNegotiation } from './middleware/content-negotiation.js';
 
 export function createApp(): Express {
   const app = express();
@@ -10,6 +13,9 @@ export function createApp(): Express {
   // Security Headers & Cross-Origin Resource Sharing
   app.use(helmet());
   app.use(cors());
+
+  // Content Negotiation (enforces 406 on unsupported representations)
+  app.use(contentNegotiation);
 
   // Request Body Parsers
   app.use(express.json());
@@ -32,5 +38,10 @@ export function createApp(): Express {
   // API v1 Routes
   app.use(env.API_PREFIX, healthRoutes);
 
+  // 404 Catch-All & Global Error Middleware
+  app.use(notFoundHandler);
+  app.use(errorHandler);
+
   return app;
 }
+
