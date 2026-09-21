@@ -3,6 +3,8 @@ import cors from 'cors';
 import helmet from 'helmet';
 import { env } from './config/environment.js';
 import healthRoutes from './routes/health.routes.js';
+import { notFoundHandler } from './middleware/not-found.middleware.js';
+import { errorHandler } from './middleware/error.middleware.js';
 
 export function createApp(): Express {
   const app = express();
@@ -32,5 +34,10 @@ export function createApp(): Express {
   // API v1 Routes
   app.use(env.API_PREFIX, healthRoutes);
 
+  // 404 Catch-All & Global Error Middleware
+  app.use(notFoundHandler);
+  app.use(errorHandler);
+
   return app;
 }
+
