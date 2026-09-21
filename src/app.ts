@@ -5,6 +5,7 @@ import { env } from './config/environment.js';
 import healthRoutes from './routes/health.routes.js';
 import { notFoundHandler } from './middleware/not-found.middleware.js';
 import { errorHandler } from './middleware/error.middleware.js';
+import { contentNegotiation } from './middleware/content-negotiation.js';
 
 export function createApp(): Express {
   const app = express();
@@ -12,6 +13,9 @@ export function createApp(): Express {
   // Security Headers & Cross-Origin Resource Sharing
   app.use(helmet());
   app.use(cors());
+
+  // Content Negotiation (enforces 406 on unsupported representations)
+  app.use(contentNegotiation);
 
   // Request Body Parsers
   app.use(express.json());
