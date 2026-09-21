@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import { env } from './config/environment.js';
 import healthRoutes from './routes/health.routes.js';
+import authRoutes from './routes/auth.routes.js';
 import { notFoundHandler } from './middleware/not-found.middleware.js';
 import { errorHandler } from './middleware/error.middleware.js';
 import { contentNegotiation } from './middleware/content-negotiation.js';
@@ -31,12 +32,14 @@ export function createApp(): Express {
       documentation: '/docs',
       endpoints: {
         health: `${env.API_PREFIX}/health`,
+        login: `${env.API_PREFIX}/auth/login`,
       },
     });
   });
 
   // API v1 Routes
   app.use(env.API_PREFIX, healthRoutes);
+  app.use(`${env.API_PREFIX}/auth`, authRoutes);
 
   // 404 Catch-All & Global Error Middleware
   app.use(notFoundHandler);
