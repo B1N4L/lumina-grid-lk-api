@@ -33,8 +33,12 @@ export class AuthService {
       .where(eq(users.email, normalizedEmail))
       .limit(1);
 
-    if (!user) {
+    if (!user || user.status === 'deleted') {
       throw new UnauthorizedError('Invalid email or password');
+    }
+
+    if (user.status === 'suspended') {
+      throw new UnauthorizedError('User account has been suspended');
     }
 
     const isPasswordValid = await comparePassword(input.password, user.passwordHash);
