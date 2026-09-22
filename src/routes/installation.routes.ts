@@ -13,15 +13,13 @@ import {
 
 const router = Router();
 
-// Protect all installation operational read routes with SLSEA Bearer JWT
-router.use(authenticateUser);
-
 /**
  * Solar Installation Endpoints
  */
 // GET /api/v1/installations - Collection (Jurisdiction Scoped, Paginated, Filterable)
 router.get(
   '/installations',
+  authenticateUser,
   validate({ query: installationQuerySchema }),
   enforceQueryJurisdiction,
   InstallationController.listInstallations
@@ -30,6 +28,7 @@ router.get(
 // GET /api/v1/installations/:id - Atomic (Jurisdiction Scoped)
 router.get(
   '/installations/:id',
+  authenticateUser,
   validate({ params: installationParamsSchema }),
   requireJurisdiction({ entityType: 'installation' }),
   InstallationController.getInstallationById
@@ -38,6 +37,7 @@ router.get(
 // GET /api/v1/installations/:id/composite - Composite Resource (Jurisdiction Scoped)
 router.get(
   '/installations/:id/composite',
+  authenticateUser,
   validate({ params: installationParamsSchema }),
   requireJurisdiction({ entityType: 'installation' }),
   InstallationController.getInstallationComposite
@@ -46,6 +46,7 @@ router.get(
 // GET /api/v1/installations/:id/last-reading - Operational Derived Resource (Jurisdiction Scoped)
 router.get(
   '/installations/:id/last-reading',
+  authenticateUser,
   validate({ params: installationParamsSchema }),
   requireJurisdiction({ entityType: 'installation' }),
   InstallationController.getInstallationLastReading
