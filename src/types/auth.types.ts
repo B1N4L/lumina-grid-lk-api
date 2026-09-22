@@ -15,6 +15,7 @@ export interface AuthenticatedDevice {
   installationId: string;
   meterId: string;
   name: string;
+  installedCapacityKw?: number;
 }
 
 declare global {
