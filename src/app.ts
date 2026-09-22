@@ -7,6 +7,7 @@ import authRoutes from './routes/auth.routes.js';
 import userRoutes from './routes/user.routes.js';
 import readingWriteRoutes from './routes/reading-write.routes.js';
 import hierarchyRoutes from './routes/hierarchy.routes.js';
+import installationRoutes from './routes/installation.routes.js';
 import { notFoundHandler } from './middleware/not-found.middleware.js';
 import { errorHandler } from './middleware/error.middleware.js';
 import { contentNegotiation } from './middleware/content-negotiation.js';
@@ -39,6 +40,7 @@ export function createApp(): Express {
         users: `${env.API_PREFIX}/users`,
         provinces: `${env.API_PREFIX}/provinces`,
         districts: `${env.API_PREFIX}/districts`,
+        installations: `${env.API_PREFIX}/installations`,
         readingsIngestion: `${env.API_PREFIX}/installations/:installationId/readings`,
       },
     });
@@ -50,6 +52,7 @@ export function createApp(): Express {
   app.use(`${env.API_PREFIX}/users`, userRoutes);
   app.use(env.API_PREFIX, readingWriteRoutes);
   app.use(env.API_PREFIX, hierarchyRoutes);
+  app.use(env.API_PREFIX, installationRoutes);
 
   // 404 Catch-All & Global Error Middleware
   app.use(notFoundHandler);

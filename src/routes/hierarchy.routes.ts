@@ -6,6 +6,7 @@ import { validate } from '../middleware/validate.js';
 import {
   provinceParamsSchema,
   districtParamsSchema,
+  substationParamsSchema,
 } from '../schemas/hierarchy.schema.js';
 
 const router = Router();
@@ -63,6 +64,25 @@ router.get(
   validate({ params: districtParamsSchema }),
   requireJurisdiction({ entityType: 'district', paramName: 'id' }),
   HierarchyController.getSubstationsByDistrict
+);
+
+/**
+ * Grid Substation Endpoints
+ */
+// GET /api/v1/grid-substations/:id - Atomic (Jurisdiction Scoped)
+router.get(
+  '/grid-substations/:id',
+  validate({ params: substationParamsSchema }),
+  requireJurisdiction({ entityType: 'substation' }),
+  HierarchyController.getSubstationById
+);
+
+// GET /api/v1/grid-substations/:id/installations - Scoped Collection (Jurisdiction Scoped)
+router.get(
+  '/grid-substations/:id/installations',
+  validate({ params: substationParamsSchema }),
+  requireJurisdiction({ entityType: 'substation', paramName: 'id' }),
+  HierarchyController.getInstallationsBySubstation
 );
 
 export default router;
