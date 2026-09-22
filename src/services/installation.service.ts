@@ -1,5 +1,5 @@
-import { eq, and, asc, sql } from 'drizzle-orm';
-import { db, solarInstallations, gridSubstations, districts, provinces } from '../db/index.js';
+import { eq, and, asc, desc, sql } from 'drizzle-orm';
+import { db, solarInstallations, gridSubstations, districts, provinces, generationReadings } from '../db/index.js';
 import { NotFoundError } from '../errors/app-error.js';
 import { UserTokenPayload } from '../types/auth.types.js';
 import { InstallationQuery } from '../schemas/hierarchy.schema.js';
@@ -27,6 +27,28 @@ export interface PaginatedInstallationsResult {
     total: number;
     totalPages: number;
   };
+}
+
+export type OperationalStatus = 'online' | 'degraded' | 'offline';
+
+export function calculateOperationalStatus(lastReadingDate?: Date | null): {
+  status: OperationalStatus;
+  ageMinutes: number | null;
+} {
+  if (!lastReadingDate) {
+    return { status: 'offline', ageMinutes: null };
+  }
+
+  const ageMs = Date.now() - new Date(lastReadingDate).getTime();
+  const ageMinutes = Math.max(0, Math.floor(ageMs / (1000 * 60)));
+
+  if (ageMinutes <= 30) {
+    return { status: 'online', ageMinutes };
+  }
+  if (ageMinutes <= 120) {
+    return { status: 'degraded', ageMinutes };
+  }
+  return { status: 'offline', ageMinutes };
 }
 
 export class InstallationService {
@@ -174,4 +196,40 @@ export class InstallationService {
 
     return installation;
   }
+
+  /**
+   * Get composite installation resource bundling installation details,
+   * substation metadata, parent district/province details, and live operational summary.
+   * Redacts internal device secrets (apiKeyHash).
+   */
+  static async getInstallationComposite(id: string) {
+    const installation = await this.getInstallationById(id);
+
+    // Fetch the single most recent generation reading using indexed scan
+    const [latestReading] = await db
+      .select()
+      .from(generationReadings)
+      .where(eq(generationReadings.installationId, id))
+      .orderBy(desc(generationReadings.timestamp))
+      .limit(1);
+
+    const { status: operationalStatus, ageMinutes } = calculateOperationalStatus(
+      latestReading ? new Date(latestReading.timestamp) : null
+    );
+
+    return {
+      ...installation,
+      operationalSummary: {
+        status: operationalStatus,
+        lastReadingTimestamp: latestReading ? latestReading.timestamp : null,
+        ageMinutes,
+        latestPowerKw: latestReading ? Number(latestReading.powerKw) : null,
+        latestEnergyKwh: latestReading ? Number(latestReading.energyKwh) : null,
+        latestVoltage: latestReading ? Number(latestReading.voltage) : null,
+        latestCurrentA: latestReading ? Number(latestReading.currentA) : null,
+        latestFrequencyHz: latestReading ? Number(latestReading.frequencyHz) : null,
+      },
+    };
+  }
 }
+

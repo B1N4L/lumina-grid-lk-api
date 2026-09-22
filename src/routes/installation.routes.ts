@@ -35,4 +35,12 @@ router.get(
   InstallationController.getInstallationById
 );
 
+// GET /api/v1/installations/:id/composite - Composite Resource (Jurisdiction Scoped)
+router.get(
+  '/installations/:id/composite',
+  validate({ params: installationParamsSchema }),
+  requireJurisdiction({ entityType: 'installation' }),
+  InstallationController.getInstallationComposite
+);
+
 export default router;
