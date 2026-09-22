@@ -43,5 +43,18 @@ export class InstallationController {
       next(error);
     }
   }
+
+  /**
+   * GET /api/v1/installations/:id/last-reading
+   * Operational derived resource returning most recent reading and site operational status
+   */
+  static async getInstallationLastReading(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const lastReading = await InstallationService.getInstallationLastReading(req.params.id as string);
+      res.status(200).json(lastReading);
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 

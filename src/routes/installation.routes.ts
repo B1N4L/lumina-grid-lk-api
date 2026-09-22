@@ -43,4 +43,12 @@ router.get(
   InstallationController.getInstallationComposite
 );
 
+// GET /api/v1/installations/:id/last-reading - Operational Derived Resource (Jurisdiction Scoped)
+router.get(
+  '/installations/:id/last-reading',
+  validate({ params: installationParamsSchema }),
+  requireJurisdiction({ entityType: 'installation' }),
+  InstallationController.getInstallationLastReading
+);
+
 export default router;

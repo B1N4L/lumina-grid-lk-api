@@ -231,5 +231,58 @@ export class InstallationService {
       },
     };
   }
+
+  /**
+   * Get operational last-reading derived resource for an installation.
+   * Scans latest reading using composite index (installation_id, timestamp DESC)
+   * and derives site operational status (online, degraded, offline).
+   */
+  static async getInstallationLastReading(id: string) {
+    const [installation] = await db
+      .select({
+        id: solarInstallations.id,
+        name: solarInstallations.name,
+        installedCapacityKw: solarInstallations.installedCapacityKw,
+      })
+      .from(solarInstallations)
+      .where(eq(solarInstallations.id, id))
+      .limit(1);
+
+    if (!installation) {
+      throw new NotFoundError(`Solar installation '${id}' was not found`);
+    }
+
+    const [latestReading] = await db
+      .select()
+      .from(generationReadings)
+      .where(eq(generationReadings.installationId, id))
+      .orderBy(desc(generationReadings.timestamp))
+      .limit(1);
+
+    const { status: operationalStatus, ageMinutes } = calculateOperationalStatus(
+      latestReading ? new Date(latestReading.timestamp) : null
+    );
+
+    return {
+      installationId: installation.id,
+      installationName: installation.name,
+      installedCapacityKw: installation.installedCapacityKw,
+      operationalStatus,
+      ageMinutes,
+      evaluatedAt: new Date().toISOString(),
+      reading: latestReading
+        ? {
+            id: latestReading.id,
+            timestamp: latestReading.timestamp,
+            powerKw: Number(latestReading.powerKw),
+            energyKwh: Number(latestReading.energyKwh),
+            voltage: Number(latestReading.voltage),
+            currentA: Number(latestReading.currentA),
+            frequencyHz: Number(latestReading.frequencyHz),
+            createdAt: latestReading.createdAt,
+          }
+        : null,
+    };
+  }
 }
 
