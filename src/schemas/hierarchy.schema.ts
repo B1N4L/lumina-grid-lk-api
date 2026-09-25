@@ -16,6 +16,13 @@ export const districtParamsSchema = z.object({
     .max(20, 'District ID must not exceed 20 characters'),
 });
 
+export const districtSummaryParamsSchema = z.object({
+  id: z.string().trim().min(1).max(20).optional(),
+  districtId: z.string().trim().min(1).max(20).optional(),
+}).refine((data) => data.id || data.districtId, {
+  message: 'District ID is required',
+});
+
 export const substationParamsSchema = z.object({
   id: z
     .string()
