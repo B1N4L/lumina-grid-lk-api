@@ -9,6 +9,7 @@ import readingWriteRoutes from './routes/reading-write.routes.js';
 import readingAnalyticalRoutes from './routes/reading-analytical.routes.js';
 import hierarchyRoutes from './routes/hierarchy.routes.js';
 import installationRoutes from './routes/installation.routes.js';
+import districtSummaryRoutes from './routes/district-summary.routes.js';
 import { notFoundHandler } from './middleware/not-found.middleware.js';
 import { errorHandler } from './middleware/error.middleware.js';
 import { contentNegotiation } from './middleware/content-negotiation.js';
@@ -44,6 +45,7 @@ export function createApp(): Express {
         installations: `${env.API_PREFIX}/installations`,
         readingsIngestion: `${env.API_PREFIX}/installations/:installationId/readings`,
         historicalReadings: `${env.API_PREFIX}/installations/:installationId/readings`,
+        districtGenerationSummary: `${env.API_PREFIX}/districts/:id/generation-summary`,
       },
     });
   });
@@ -56,6 +58,7 @@ export function createApp(): Express {
   app.use(env.API_PREFIX, readingAnalyticalRoutes);
   app.use(env.API_PREFIX, hierarchyRoutes);
   app.use(env.API_PREFIX, installationRoutes);
+  app.use(env.API_PREFIX, districtSummaryRoutes);
 
   // 404 Catch-All & Global Error Middleware
   app.use(notFoundHandler);
