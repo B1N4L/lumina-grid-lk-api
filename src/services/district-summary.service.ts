@@ -112,6 +112,11 @@ export class DistrictSummaryService {
       latestReadings.reduce((sum: number, r: any) => sum + (Number(r.power_kw) || 0), 0).toFixed(3)
     );
 
+    const maxTimestamp =
+      latestReadings.length > 0
+        ? new Date(Math.max(...latestReadings.map((r: any) => new Date(r.timestamp).getTime()))).toISOString()
+        : null;
+
     // 4. Compute active_installations_count:
     // Installations actively pushing readings in the last 60 minutes
     const sixtyMinutesAgo = new Date(Date.now() - 60 * 60 * 1000);
@@ -200,7 +205,7 @@ export class DistrictSummaryService {
       provinceId: district.provinceId,
       provinceName: district.provinceName,
       provinceCode: district.provinceCode,
-      evaluatedAt: new Date().toISOString(),
+      evaluatedAt: maxTimestamp || new Date().toISOString(),
       current_total_power_kw: currentTotalPowerKw,
       today_total_energy_kwh: todayTotalEnergyKwh,
       peak_power_today_kw: peakPowerTodayKw,
