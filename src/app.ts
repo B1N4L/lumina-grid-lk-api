@@ -10,6 +10,7 @@ import readingAnalyticalRoutes from './routes/reading-analytical.routes.js';
 import hierarchyRoutes from './routes/hierarchy.routes.js';
 import installationRoutes from './routes/installation.routes.js';
 import districtSummaryRoutes from './routes/district-summary.routes.js';
+import docsRoutes from './routes/docs.routes.js';
 import { notFoundHandler } from './middleware/not-found.middleware.js';
 import { errorHandler } from './middleware/error.middleware.js';
 import { contentNegotiation } from './middleware/content-negotiation.js';
@@ -18,7 +19,18 @@ export function createApp(): Express {
   const app = express();
 
   // Security Headers & Cross-Origin Resource Sharing
-  app.use(helmet());
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'", 'https://cdnjs.cloudflare.com'],
+          styleSrc: ["'self'", "'unsafe-inline'", 'https://cdnjs.cloudflare.com'],
+          imgSrc: ["'self'", 'data:', 'https://validator.swagger.io'],
+        },
+      },
+    })
+  );
   app.use(cors());
 
   // Content Negotiation (enforces 406 on unsupported representations)
@@ -28,6 +40,10 @@ export function createApp(): Express {
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
+  // Interactive OpenAPI Documentation & Specification Endpoints (/docs, /openapi.json, /openapi.yaml)
+  app.use(docsRoutes);
+  app.use(env.API_PREFIX, docsRoutes);
+
   // Root Service Descriptor
   app.get('/', (_req, res) => {
     res.status(200).json({
@@ -36,6 +52,8 @@ export function createApp(): Express {
       status: 'operational',
       authority: 'Sri Lanka Sustainable Energy Authority (SLSEA)',
       documentation: '/docs',
+      openApiJson: '/openapi.json',
+      openApiYaml: '/openapi.yaml',
       endpoints: {
         health: `${env.API_PREFIX}/health`,
         login: `${env.API_PREFIX}/auth/login`,
