@@ -10,8 +10,8 @@ import { NotAcceptableError } from '../errors/app-error.js';
  * - Exempts documentation routes (/docs) to permit HTML rendering for Swagger UI.
  */
 export function contentNegotiation(req: Request, res: Response, next: NextFunction): void {
-  // Allow browser navigation to interactive documentation
-  if (req.path.startsWith('/docs') || req.path === '/favicon.ico') {
+  // Allow browser navigation to interactive documentation and specification files
+  if (req.path.includes('/docs') || req.path.includes('/openapi') || req.path === '/favicon.ico') {
     return next();
   }
 
