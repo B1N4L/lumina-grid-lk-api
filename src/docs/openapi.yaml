@@ -1,0 +1,2082 @@
+openapi: 3.0.3
+info:
+  title: Lumina Grid LK - Real-Time Solar Generation Data API
+  version: 1.0.0
+  description: |
+    Production-grade RESTful API engineered for the Sri Lanka Sustainable Energy Authority (SLSEA)
+    to ingest, monitor, and analyze nationwide distributed solar PV generation telemetry across
+    all 9 provinces and 25 administrative districts.
+    
+    ### Key Architectural Invariants
+    - **RMM Level 2 Compliance**: Resource-oriented URIs, HTTP verbs (`GET`, `POST`, `PUT`, `DELETE`), standard status codes (`200`, `201`, `304`, `400`, `401`, `403`, `404`, `406`, `409`, `412`).
+    - **RFC 7807 Error Contract**: Uniform application/problem+json representations for all error scenarios.
+    - **Domain Integrity**: Direct meter/inverter attribution on solar installations; immutable, append-only generation readings time-series.
+    - **Write-Read Split**: Metering devices authenticated via `X-Device-Key` can ONLY write telemetry readings. Administrative & analytical reads require scoped Bearer JWT tokens.
+    - **Jurisdiction ABAC**: Multi-tiered scoping for `national_admin` (nationwide), `provincial_analyst` (assigned province), and `district_operator` (assigned district).
+    - **RFC 7232 / RFC 9110 Caching**: Strong SHA-256 `ETag` and `Last-Modified` validation with `304 Not Modified` conditional responses.
+  contact:
+    name: SLSEA Grid Integration Division
+    email: api-support@energy.gov.lk
+    url: https://www.energy.gov.lk
+  license:
+    name: Proprietary / Academic Evaluation (NB6007CEM)
+
+servers:
+  - url: /
+    description: Current deployment origin (Local or Serverless Function)
+  - url: http://localhost:3000
+    description: Local development environment
+  - url: https://lumina-grid-lk.vercel.app
+    description: Production Vercel serverless deployment
+
+tags:
+  - name: System
+    description: Liveness, readiness, and database connectivity health probes.
+  - name: Authentication
+    description: Operator authentication and JSON Web Token (JWT) issuance.
+  - name: User Management
+    description: Administrative User CRUD operations and password governance (National Admin only).
+  - name: Telemetry Ingestion
+    description: High-throughput device write path for metering telemetry (Device API Key only).
+  - name: Operational Read Path
+    description: Geographic and electrical grid hierarchy exploration and operational status derived resources.
+  - name: Analytical Read Path
+    description: Historical time-series telemetry exploration with pagination, sorting, and multi-field filtering.
+  - name: District Aggregates
+    description: Upper-band stretch goal real-time processing and daily energy summation by district.
+
+paths:
+  # =========================================================================
+  # SYSTEM HEALTH
+  # =========================================================================
+  /api/v1/health:
+    get:
+      tags:
+        - System
+      summary: System Health & Database Connectivity Probe
+      description: Returns service operational status, current ISO timestamp, and live database round-trip health.
+      operationId: getHealth
+      responses:
+        '200':
+          description: Service is operational and database is responsive.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Database connectivity probe failed or service unhealthy.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  # =========================================================================
+  # AUTHENTICATION
+  # =========================================================================
+  /api/v1/auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: Personnel Authentication & JWT Issuance
+      description: |
+        Authenticates system personnel using email and password credentials.
+        Returns a signed JWT bearer token containing role and jurisdiction claims (`provinceId`, `districtId`).
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Successfully authenticated. Returns signed JWT bearer token and user profile.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          description: Malformed request payload or missing fields.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Invalid email or password credentials.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  # =========================================================================
+  # USER MANAGEMENT (Phase 5.5)
+  # =========================================================================
+  /api/v1/users:
+    get:
+      tags:
+        - User Management
+      summary: List Users with Pagination & Filters (Admin Only)
+      description: Retrieves a paginated collection of system users. Supports filtering by role, status, provinceId, and districtId. Requires `national_admin`.
+      operationId: listUsers
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          description: 1-indexed page number
+          required: false
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: limit
+          in: query
+          description: Number of records per page (max 100)
+          required: false
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+        - name: role
+          in: query
+          description: Filter users by assigned role
+          required: false
+          schema:
+            type: string
+            enum: [national_admin, provincial_analyst, district_operator]
+        - name: status
+          in: query
+          description: Filter users by account status
+          required: false
+          schema:
+            type: string
+            enum: [active, suspended, deleted]
+        - name: provinceId
+          in: query
+          description: Filter users by province jurisdiction ID
+          required: false
+          schema:
+            type: string
+        - name: districtId
+          in: query
+          description: Filter users by district jurisdiction ID
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated collection of users (passwords redacted).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedUsersResponse'
+        '401':
+          description: Missing, expired, or invalid Bearer JWT token.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Insufficient privileges (only national_admin permitted).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+    post:
+      tags:
+        - User Management
+      summary: Create System User (Admin Only)
+      description: Provision a new user account with validated role and geographic jurisdiction boundaries. Requires `national_admin`.
+      operationId: createUser
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: User provisioned successfully. Includes Location header referencing atomic resource.
+          headers:
+            Location:
+              description: URI of the newly created user resource.
+              schema:
+                type: string
+                example: /api/v1/users/usr-lk-0005
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          description: Validation error (e.g. invalid email format, missing jurisdiction for scoped roles).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Missing or invalid token.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden - caller is not a national_admin.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Email conflict - an active user with this email already exists.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/users/{id}:
+    get:
+      tags:
+        - User Management
+      summary: Get User by ID (Admin Only)
+      description: Retrieves single atomic user record with sanitized credentials. Requires `national_admin`.
+      operationId: getUserById
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: User identifier
+          schema:
+            type: string
+            example: usr-admin-001
+      responses:
+        '200':
+          description: Atomic user resource representation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '401':
+          description: Missing or invalid token.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: User not found or soft-deleted.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+    put:
+      tags:
+        - User Management
+      summary: Update User Details (Admin Only)
+      description: Update user profile attributes, status, and jurisdiction scoping. Prevents self-role demotion/elevation. Requires `national_admin`.
+      operationId: updateUser
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: User identifier
+          schema:
+            type: string
+            example: usr-op-001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: User profile successfully updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          description: Validation error or invalid jurisdiction pairing.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Missing or invalid token.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden (e.g. self-role modification or self-deactivation).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: User not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+    delete:
+      tags:
+        - User Management
+      summary: Soft-Delete User Account (Admin Only)
+      description: Marks user account status as 'deleted'. Enforces self-deletion and last-admin lockout guards. Requires `national_admin`.
+      operationId: deleteUser
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: User identifier
+          schema:
+            type: string
+            example: usr-op-001
+      responses:
+        '200':
+          description: User successfully soft-deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: User usr-op-001 soft-deleted successfully
+        '401':
+          description: Missing or invalid token.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden (e.g. attempting to delete self or last remaining active national admin).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: User not found or already deleted.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/users/{id}/password:
+    put:
+      tags:
+        - User Management
+      summary: Administrative Password Reset (Admin Only)
+      description: Resets password credentials for a target user account. Hashes with bcrypt (cost 10). Requires `national_admin`.
+      operationId: resetUserPassword
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: User identifier
+          schema:
+            type: string
+            example: usr-op-001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequest'
+      responses:
+        '200':
+          description: Password reset successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Password reset successfully for user usr-op-001
+        '400':
+          description: Invalid password (must meet complexity requirements: 8+ chars, upper, lower, number, special char).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Missing or invalid token.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: User not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  # =========================================================================
+  # TELEMETRY WRITE PATH & INGESTION (Phase 6)
+  # =========================================================================
+  /api/v1/installations/{installationId}/readings:
+    post:
+      tags:
+        - Telemetry Ingestion
+      summary: Ingest Time-Series Generation Reading (Device Write Path)
+      description: |
+        Ingests real-time solar generation telemetry for a specific installation.
+        Requires Device API Key (`X-Device-Key`).
+        
+        **Invariants Enforced:**
+        - Physical bounds validation (Voltage 180-260V, Frequency 47-53Hz, Power ≤ 120% of installation rated capacity).
+        - Idempotent ingestion: Duplicate identical timestamp returns 200/201 without row duplication.
+        - Conflicting duplicate timestamp returns 409 Conflict.
+        - Response includes `Location` header pointing to the persisted reading.
+      operationId: ingestReading
+      security:
+        - DeviceApiKey: []
+      parameters:
+        - name: installationId
+          in: path
+          required: true
+          description: Unique installation identifier
+          schema:
+            type: string
+            example: inst-lk-0001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReadingIngestRequest'
+      responses:
+        '201':
+          description: Reading ingested successfully. Includes Location header.
+          headers:
+            Location:
+              description: Canonical URI of the ingested reading.
+              schema:
+                type: string
+                example: /api/v1/installations/inst-lk-0001/readings/read-uuid-1234
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadingResponse'
+        '400':
+          description: Electrical or physical bounds validation failure.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Missing or invalid X-Device-Key header.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Target installation not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Conflicting telemetry data detected for the identical timestamp.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+    get:
+      tags:
+        - Analytical Read Path
+      summary: Historical Generation Readings Sub-Collection
+      description: |
+        Queries historical generation readings for an installation with multi-field filtering,
+        configurable sorting, RFC pagination envelopes, HATEOAS navigation links, and HTTP conditional caching (ETag / Last-Modified).
+        
+        **Jurisdiction Scoping:**
+        - `national_admin`: Access across all installations nationwide.
+        - `provincial_analyst`: Installations within assigned province.
+        - `district_operator`: Installations within assigned district.
+        - Devices (`X-Device-Key`): Rejected with 401 Unauthorized (Write-Read split).
+      operationId: getHistoricalReadings
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: installationId
+          in: path
+          required: true
+          description: Installation identifier
+          schema:
+            type: string
+            example: inst-lk-0001
+        - name: page
+          in: query
+          description: 1-indexed page number
+          required: false
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: limit
+          in: query
+          description: Number of readings per page (max 1000)
+          required: false
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+            maximum: 1000
+        - name: from
+          in: query
+          description: Start timestamp (ISO 8601)
+          required: false
+          schema:
+            type: string
+            format: date-time
+            example: '2026-09-01T00:00:00.000Z'
+        - name: to
+          in: query
+          description: End timestamp (ISO 8601)
+          required: false
+          schema:
+            type: string
+            format: date-time
+            example: '2026-09-07T23:59:59.999Z'
+        - name: min_power_kw
+          in: query
+          description: Minimum instantaneous power filter (alias: minPowerKw)
+          required: false
+          schema:
+            type: number
+            minimum: 0
+        - name: max_power_kw
+          in: query
+          description: Maximum instantaneous power filter (alias: maxPowerKw)
+          required: false
+          schema:
+            type: number
+            minimum: 0
+        - name: sort_by
+          in: query
+          description: Sort column (alias: sortBy)
+          required: false
+          schema:
+            type: string
+            enum: [timestamp, power_kw, energy_kwh]
+            default: timestamp
+        - name: order
+          in: query
+          description: Sort direction
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+        - name: If-None-Match
+          in: header
+          required: false
+          description: SHA-256 ETag from previous response for conditional validation
+          schema:
+            type: string
+        - name: If-Modified-Since
+          in: header
+          required: false
+          description: HTTP-date for conditional validation
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated readings sub-collection with HATEOAS link relations.
+          headers:
+            ETag:
+              description: Strong SHA-256 hash of response payload.
+              schema:
+                type: string
+            Last-Modified:
+              description: Timestamp of newest reading in page.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistoricalReadingsResponse'
+        '304':
+          description: Not Modified. Cached representation remains fresh.
+        '400':
+          description: Invalid query parameters (e.g. invalid date format or negative power).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Missing or invalid Bearer JWT token.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Access denied by jurisdiction boundaries.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Installation not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  # =========================================================================
+  # OPERATIONAL READ PATH: HIERARCHY
+  # =========================================================================
+  /api/v1/provinces:
+    get:
+      tags:
+        - Operational Read Path
+      summary: List Provinces
+      description: Returns all 9 administrative provinces of Sri Lanka. Supports ETag caching.
+      operationId: listProvinces
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: If-None-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of provinces.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProvinceResponse'
+        '304':
+          description: Not Modified.
+        '401':
+          description: Unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/provinces/{id}:
+    get:
+      tags:
+        - Operational Read Path
+      summary: Get Province by ID
+      description: Returns details of a specific province.
+      operationId: getProvinceById
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Province ID (e.g. prov-western)
+          schema:
+            type: string
+        - name: If-None-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Province details.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProvinceResponse'
+        '304':
+          description: Not Modified.
+        '401':
+          description: Unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Province not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/provinces/{id}/districts:
+    get:
+      tags:
+        - Operational Read Path
+      summary: List Districts in Province
+      description: Returns all districts located within the specified province.
+      operationId: listDistrictsByProvince
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Province ID
+          schema:
+            type: string
+        - name: If-None-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Districts under province.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DistrictResponse'
+        '304':
+          description: Not Modified.
+        '401':
+          description: Unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Province not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/districts:
+    get:
+      tags:
+        - Operational Read Path
+      summary: List All Districts
+      description: Returns all 25 administrative districts across Sri Lanka.
+      operationId: listDistricts
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: If-None-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Collection of districts.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DistrictResponse'
+        '304':
+          description: Not Modified.
+        '401':
+          description: Unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/districts/{id}:
+    get:
+      tags:
+        - Operational Read Path
+      summary: Get District by ID
+      description: Returns details of a specific district. Jurisdiction scoped for operators.
+      operationId: getDistrictById
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: District ID (e.g. dist-colombo)
+          schema:
+            type: string
+        - name: If-None-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: District details.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DistrictResponse'
+        '304':
+          description: Not Modified.
+        '401':
+          description: Unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden (cross-jurisdiction access).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: District not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/districts/{id}/grid-substations:
+    get:
+      tags:
+        - Operational Read Path
+      summary: List Grid Substations in District
+      description: Returns all CEB/LECO grid substations located in the specified district. Jurisdiction scoped.
+      operationId: listSubstationsByDistrict
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: District ID
+          schema:
+            type: string
+        - name: If-None-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of grid substations.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SubstationResponse'
+        '304':
+          description: Not Modified.
+        '401':
+          description: Unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: District not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/grid-substations/{id}:
+    get:
+      tags:
+        - Operational Read Path
+      summary: Get Grid Substation by ID
+      description: Returns technical details of a grid substation (capacity in MVA, voltage level). Jurisdiction scoped.
+      operationId: getSubstationById
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Grid substation ID (e.g. sub-kolonnawa)
+          schema:
+            type: string
+        - name: If-None-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Grid substation details.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubstationResponse'
+        '304':
+          description: Not Modified.
+        '401':
+          description: Unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Substation not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/grid-substations/{id}/installations:
+    get:
+      tags:
+        - Operational Read Path
+      summary: List Installations Connected to Substation
+      description: Returns all solar installations linked to a grid substation. Passwords/apiKeyHash are strictly redacted. Jurisdiction scoped.
+      operationId: listInstallationsBySubstation
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Grid substation ID
+          schema:
+            type: string
+        - name: If-None-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of connected installations.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/InstallationResponse'
+        '304':
+          description: Not Modified.
+        '401':
+          description: Unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Substation not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  # =========================================================================
+  # SOLAR INSTALLATIONS (ATOMIC, COMPOSITE, LAST-READING)
+  # =========================================================================
+  /api/v1/installations/{id}:
+    get:
+      tags:
+        - Operational Read Path
+      summary: Get Single Installation Metadata (Atomic Resource)
+      description: Retrieves atomic metadata for an installation. Direct columns `meter_id` and `inverter_id` are exposed; `apiKeyHash` is never exposed.
+      operationId: getInstallationById
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Installation identifier
+          schema:
+            type: string
+            example: inst-lk-0001
+        - name: If-None-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Installation atomic metadata.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstallationResponse'
+        '304':
+          description: Not Modified.
+        '401':
+          description: Unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Installation not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/installations/{id}/composite:
+    get:
+      tags:
+        - Operational Read Path
+      summary: Composite Installation Resource
+      description: |
+        RMM Level 2 Composite Resource: Bundles installation metadata with nested substation,
+        district, province, and operational summary to eliminate client chatty round-trips.
+      operationId: getCompositeInstallation
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Installation identifier
+          schema:
+            type: string
+            example: inst-lk-0001
+        - name: If-None-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Bundled composite installation representation.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompositeInstallationResponse'
+        '304':
+          description: Not Modified.
+        '401':
+          description: Unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Installation not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/installations/{id}/last-reading:
+    get:
+      tags:
+        - Operational Read Path
+      summary: Operational Derived Resource (Last Reading & Status)
+      description: |
+        Returns the latest generation reading and dynamically derived operational status
+        ('online' if reading received within last 30 minutes, otherwise 'offline').
+      operationId: getLastReading
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Installation identifier
+          schema:
+            type: string
+            example: inst-lk-0001
+        - name: If-None-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Latest telemetry snapshot and operational connectivity status.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LastReadingResponse'
+        '304':
+          description: Not Modified.
+        '401':
+          description: Unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Installation not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  # =========================================================================
+  # DISTRICT GENERATION SUMMARY (Phase 9 Stretch Goal)
+  # =========================================================================
+  /api/v1/districts/{districtId}/generation-summary:
+    get:
+      tags:
+        - District Aggregates
+      summary: District Generation Summary (Processing Derived Aggregate)
+      description: |
+        Upper-Band Stretch Goal processing-style derived resource. Computes collective instantaneous
+        generation power (kW), cumulative energy generated today (kWh in Asia/Colombo time),
+        peak generation today (kW), and online installation counts across all solar systems in the district.
+        
+        Supports both `:districtId` and `:id` in URL routing.
+      operationId: getDistrictGenerationSummary
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: districtId
+          in: path
+          required: true
+          description: District identifier (e.g. dist-colombo)
+          schema:
+            type: string
+            example: dist-colombo
+        - name: date
+          in: query
+          description: Target calendar date in YYYY-MM-DD format (defaults to current Sri Lanka date)
+          required: false
+          schema:
+            type: string
+            format: date
+            example: '2026-09-25'
+        - name: If-None-Match
+          in: header
+          required: false
+          description: ETag header for conditional 304 caching
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Real-time aggregated district power and energy metrics.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DistrictGenerationSummaryResponse'
+        '304':
+          description: Not Modified.
+        '400':
+          description: Invalid date format.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden (cross-jurisdiction access).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: District not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Operator/analyst/admin authentication token containing role and jurisdiction claims.
+    DeviceApiKey:
+      type: apiKey
+      in: header
+      name: X-Device-Key
+      description: Hardware smart meter API secret key for telemetry ingestion.
+
+  schemas:
+    # -----------------------------------------------------------------------
+    # RFC 7807 PROBLEM DETAILS
+    # -----------------------------------------------------------------------
+    ProblemDetails:
+      type: object
+      required:
+        - type
+        - title
+        - status
+        - detail
+        - instance
+      properties:
+        type:
+          type: string
+          format: uri
+          example: https://lumina-grid.energy.gov.lk/errors/not-found
+        title:
+          type: string
+          example: Resource Not Found
+        status:
+          type: integer
+          example: 404
+        detail:
+          type: string
+          example: Installation with ID 'inst-lk-9999' was not found.
+        instance:
+          type: string
+          example: /api/v1/installations/inst-lk-9999
+        code:
+          type: string
+          example: NOT_FOUND
+        invalidParams:
+          type: array
+          description: Present on validation errors (400 Bad Request)
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+                example: power_kw
+              reason:
+                type: string
+                example: Number must be greater than or equal to 0
+        timestamp:
+          type: string
+          format: date-time
+          example: '2026-09-25T07:15:00.000Z'
+
+    # -----------------------------------------------------------------------
+    # SYSTEM & AUTH SCHEMAS
+    # -----------------------------------------------------------------------
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - timestamp
+        - database
+      properties:
+        status:
+          type: string
+          example: ok
+        timestamp:
+          type: string
+          format: date-time
+          example: '2026-09-25T07:00:00.000Z'
+        database:
+          type: object
+          required:
+            - status
+            - latencyMs
+          properties:
+            status:
+              type: string
+              example: connected
+            latencyMs:
+              type: number
+              example: 4.82
+
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: admin@energy.gov.lk
+        password:
+          type: string
+          format: password
+          example: Admin@SLSEA2026!
+
+    AuthUser:
+      type: object
+      required:
+        - id
+        - email
+        - role
+        - fullName
+      properties:
+        id:
+          type: string
+          example: usr-admin-001
+        email:
+          type: string
+          example: admin@energy.gov.lk
+        role:
+          type: string
+          enum: [national_admin, provincial_analyst, district_operator]
+          example: national_admin
+        fullName:
+          type: string
+          example: Dr. Rohan Perera
+        provinceId:
+          type: string
+          nullable: true
+          example: null
+        districtId:
+          type: string
+          nullable: true
+          example: null
+
+    LoginResponse:
+      type: object
+      required:
+        - token
+        - user
+      properties:
+        token:
+          type: string
+          description: Signed JWT Bearer token valid for 8 hours.
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        user:
+          $ref: '#/components/schemas/AuthUser'
+
+    # -----------------------------------------------------------------------
+    # USER MANAGEMENT SCHEMAS
+    # -----------------------------------------------------------------------
+    UserResponse:
+      type: object
+      required:
+        - id
+        - email
+        - role
+        - fullName
+        - status
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          example: usr-lk-0005
+        email:
+          type: string
+          format: email
+          example: operator.colombo@energy.gov.lk
+        role:
+          type: string
+          enum: [national_admin, provincial_analyst, district_operator]
+          example: district_operator
+        fullName:
+          type: string
+          example: K. Fernando
+        status:
+          type: string
+          enum: [active, suspended, deleted]
+          example: active
+        provinceId:
+          type: string
+          nullable: true
+          example: prov-western
+        districtId:
+          type: string
+          nullable: true
+          example: dist-colombo
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-09-25T07:00:00.000Z'
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2026-09-25T07:00:00.000Z'
+
+    CreateUserRequest:
+      type: object
+      required:
+        - email
+        - password
+        - role
+        - fullName
+      properties:
+        email:
+          type: string
+          format: email
+          example: operator.colombo@energy.gov.lk
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: SecureP@ssw0rd2026!
+        role:
+          type: string
+          enum: [national_admin, provincial_analyst, district_operator]
+          example: district_operator
+        fullName:
+          type: string
+          example: K. Fernando
+        status:
+          type: string
+          enum: [active, suspended]
+          default: active
+        provinceId:
+          type: string
+          nullable: true
+          description: Required if role is provincial_analyst or district_operator
+          example: prov-western
+        districtId:
+          type: string
+          nullable: true
+          description: Required if role is district_operator
+          example: dist-colombo
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        fullName:
+          type: string
+        status:
+          type: string
+          enum: [active, suspended]
+        role:
+          type: string
+          enum: [national_admin, provincial_analyst, district_operator]
+        provinceId:
+          type: string
+          nullable: true
+        districtId:
+          type: string
+          nullable: true
+
+    ResetPasswordRequest:
+      type: object
+      required:
+        - password
+      properties:
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: NewCompl3xP@ss2026!
+
+    PaginatedUsersResponse:
+      type: object
+      required:
+        - data
+        - pagination
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserResponse'
+        pagination:
+          $ref: '#/components/schemas/PaginationEnvelope'
+
+    # -----------------------------------------------------------------------
+    # TELEMETRY READINGS SCHEMAS
+    # -----------------------------------------------------------------------
+    ReadingIngestRequest:
+      type: object
+      required:
+        - timestamp
+        - power_kw
+        - energy_kwh
+        - voltage
+        - current_a
+        - frequency_hz
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          description: UTC ISO timestamp of meter reading
+          example: '2026-09-25T07:15:00.000Z'
+        power_kw:
+          type: number
+          description: Instantaneous active power generation in kW (alias: powerKw)
+          example: 4.85
+        energy_kwh:
+          type: number
+          description: Cumulative generation meter reading in kWh (alias: energyKwh)
+          example: 12450.60
+        voltage:
+          type: number
+          description: Single-phase or line-to-neutral grid AC voltage (180V - 260V)
+          example: 230.4
+        current_a:
+          type: number
+          description: AC output current in Amperes (alias: currentA)
+          example: 21.05
+        frequency_hz:
+          type: number
+          description: Grid AC frequency in Hertz (47Hz - 53Hz, alias: frequencyHz)
+          example: 50.02
+
+    ReadingResponse:
+      type: object
+      required:
+        - id
+        - installationId
+        - timestamp
+        - powerKw
+        - energyKwh
+        - voltage
+        - currentA
+        - frequencyHz
+        - createdAt
+      properties:
+        id:
+          type: string
+          example: read-lk-0001-20260925-071500
+        installationId:
+          type: string
+          example: inst-lk-0001
+        installation_id:
+          type: string
+          example: inst-lk-0001
+        timestamp:
+          type: string
+          format: date-time
+          example: '2026-09-25T07:15:00.000Z'
+        powerKw:
+          type: number
+          example: 4.85
+        power_kw:
+          type: number
+          example: 4.85
+        energyKwh:
+          type: number
+          example: 12450.60
+        energy_kwh:
+          type: number
+          example: 12450.60
+        voltage:
+          type: number
+          example: 230.4
+        currentA:
+          type: number
+          example: 21.05
+        current_a:
+          type: number
+          example: 21.05
+        frequencyHz:
+          type: number
+          example: 50.02
+        frequency_hz:
+          type: number
+          example: 50.02
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-09-25T07:15:01.000Z'
+
+    PaginationEnvelope:
+      type: object
+      required:
+        - page
+        - limit
+        - totalCount
+        - totalPages
+      properties:
+        page:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 50
+        totalCount:
+          type: integer
+          example: 672
+        totalPages:
+          type: integer
+          example: 14
+        total_count:
+          type: integer
+          example: 672
+        total_pages:
+          type: integer
+          example: 14
+
+    HateoasLink:
+      type: object
+      required:
+        - href
+      properties:
+        href:
+          type: string
+          example: /api/v1/installations/inst-lk-0001/readings?page=2&limit=50
+
+    HateoasLinks:
+      type: object
+      required:
+        - self
+        - first
+        - last
+      properties:
+        self:
+          $ref: '#/components/schemas/HateoasLink'
+        first:
+          $ref: '#/components/schemas/HateoasLink'
+        prev:
+          allOf:
+            - $ref: '#/components/schemas/HateoasLink'
+          nullable: true
+        next:
+          allOf:
+            - $ref: '#/components/schemas/HateoasLink'
+          nullable: true
+        last:
+          $ref: '#/components/schemas/HateoasLink'
+
+    HistoricalReadingsResponse:
+      type: object
+      required:
+        - data
+        - pagination
+        - _links
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReadingResponse'
+        pagination:
+          $ref: '#/components/schemas/PaginationEnvelope'
+        _links:
+          $ref: '#/components/schemas/HateoasLinks'
+
+    # -----------------------------------------------------------------------
+    # HIERARCHY & OPERATIONAL SCHEMAS
+    # -----------------------------------------------------------------------
+    ProvinceResponse:
+      type: object
+      required:
+        - id
+        - code
+        - name
+        - createdAt
+      properties:
+        id:
+          type: string
+          example: prov-western
+        code:
+          type: string
+          example: WP
+        name:
+          type: string
+          example: Western
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-09-01T00:00:00.000Z'
+
+    DistrictResponse:
+      type: object
+      required:
+        - id
+        - code
+        - name
+        - provinceId
+        - createdAt
+      properties:
+        id:
+          type: string
+          example: dist-colombo
+        code:
+          type: string
+          example: COL
+        name:
+          type: string
+          example: Colombo
+        provinceId:
+          type: string
+          example: prov-western
+        province_id:
+          type: string
+          example: prov-western
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-09-01T00:00:00.000Z'
+
+    SubstationResponse:
+      type: object
+      required:
+        - id
+        - code
+        - name
+        - districtId
+        - capacityMva
+        - voltageKv
+        - createdAt
+      properties:
+        id:
+          type: string
+          example: sub-kolonnawa
+        code:
+          type: string
+          example: KLN
+        name:
+          type: string
+          example: Kolonnawa Grid Substation
+        districtId:
+          type: string
+          example: dist-colombo
+        district_id:
+          type: string
+          example: dist-colombo
+        capacityMva:
+          type: number
+          example: 60.00
+        capacity_mva:
+          type: number
+          example: 60.00
+        voltageKv:
+          type: string
+          example: 132/33 kV
+        voltage_kv:
+          type: string
+          example: 132/33 kV
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-09-01T00:00:00.000Z'
+
+    InstallationResponse:
+      type: object
+      required:
+        - id
+        - code
+        - name
+        - substationId
+        - capacityKw
+        - meterId
+        - inverterId
+        - commissionedDate
+        - status
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          example: inst-lk-0001
+        code:
+          type: string
+          example: SL-WP-COL-0001
+        name:
+          type: string
+          example: Colombo Commercial Rooftop PV 1
+        substationId:
+          type: string
+          example: sub-kolonnawa
+        substation_id:
+          type: string
+          example: sub-kolonnawa
+        capacityKw:
+          type: number
+          example: 5.00
+        capacity_kw:
+          type: number
+          example: 5.00
+        meterId:
+          type: string
+          example: MTR-LK-0001
+        meter_id:
+          type: string
+          example: MTR-LK-0001
+        inverterId:
+          type: string
+          example: INV-LK-0001
+        inverter_id:
+          type: string
+          example: INV-LK-0001
+        commissionedDate:
+          type: string
+          format: date
+          example: '2024-01-15'
+        commissioned_date:
+          type: string
+          format: date
+          example: '2024-01-15'
+        status:
+          type: string
+          enum: [active, maintenance, decommissioned]
+          example: active
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-09-01T00:00:00.000Z'
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2026-09-01T00:00:00.000Z'
+
+    CompositeInstallationResponse:
+      type: object
+      required:
+        - id
+        - code
+        - name
+        - capacityKw
+        - meterId
+        - inverterId
+        - commissionedDate
+        - status
+        - substation
+        - district
+        - province
+        - operationalStatus
+      properties:
+        id:
+          type: string
+          example: inst-lk-0001
+        code:
+          type: string
+          example: SL-WP-COL-0001
+        name:
+          type: string
+          example: Colombo Commercial Rooftop PV 1
+        capacityKw:
+          type: number
+          example: 5.00
+        meterId:
+          type: string
+          example: MTR-LK-0001
+        inverterId:
+          type: string
+          example: INV-LK-0001
+        commissionedDate:
+          type: string
+          format: date
+          example: '2024-01-15'
+        status:
+          type: string
+          example: active
+        substation:
+          $ref: '#/components/schemas/SubstationResponse'
+        district:
+          $ref: '#/components/schemas/DistrictResponse'
+        province:
+          $ref: '#/components/schemas/ProvinceResponse'
+        operationalStatus:
+          type: object
+          properties:
+            status:
+              type: string
+              enum: [online, offline]
+              example: online
+            lastReadingAt:
+              type: string
+              format: date-time
+              nullable: true
+              example: '2026-09-25T07:15:00.000Z'
+            currentPowerKw:
+              type: number
+              nullable: true
+              example: 4.85
+
+    LastReadingResponse:
+      type: object
+      required:
+        - installationId
+        - operationalStatus
+      properties:
+        installationId:
+          type: string
+          example: inst-lk-0001
+        operationalStatus:
+          type: string
+          enum: [online, offline]
+          example: online
+        operational_status:
+          type: string
+          enum: [online, offline]
+          example: online
+        lastReading:
+          allOf:
+            - $ref: '#/components/schemas/ReadingResponse'
+          nullable: true
+        last_reading:
+          allOf:
+            - $ref: '#/components/schemas/ReadingResponse'
+          nullable: true
+
+    DistrictGenerationSummaryResponse:
+      type: object
+      required:
+        - districtId
+        - districtName
+        - provinceId
+        - provinceName
+        - provinceCode
+        - evaluatedAt
+        - currentTotalPowerKw
+        - todayTotalEnergyKwh
+        - peakPowerTodayKw
+        - activeInstallationsCount
+        - totalInstallationsCount
+      properties:
+        district_id:
+          type: string
+          example: dist-colombo
+        districtId:
+          type: string
+          example: dist-colombo
+        district_name:
+          type: string
+          example: Colombo
+        districtName:
+          type: string
+          example: Colombo
+        province_id:
+          type: string
+          example: prov-western
+        provinceId:
+          type: string
+          example: prov-western
+        province_name:
+          type: string
+          example: Western
+        provinceName:
+          type: string
+          example: Western
+        province_code:
+          type: string
+          example: WP
+        provinceCode:
+          type: string
+          example: WP
+        evaluated_at:
+          type: string
+          format: date-time
+          example: '2026-09-25T07:15:00.000Z'
+        evaluatedAt:
+          type: string
+          format: date-time
+          example: '2026-09-25T07:15:00.000Z'
+        current_total_power_kw:
+          type: number
+          example: 42.15
+        currentTotalPowerKw:
+          type: number
+          example: 42.15
+        today_total_energy_kwh:
+          type: number
+          example: 312.45
+        todayTotalEnergyKwh:
+          type: number
+          example: 312.45
+        peak_power_today_kw:
+          type: number
+          example: 58.80
+        peakPowerTodayKw:
+          type: number
+          example: 58.80
+        active_installations_count:
+          type: integer
+          example: 8
+        activeInstallationsCount:
+          type: integer
+          example: 8
+        total_installations_count:
+          type: integer
+          example: 8
+        totalInstallationsCount:
+          type: integer
+          example: 8
