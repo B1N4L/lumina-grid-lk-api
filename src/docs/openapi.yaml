@@ -80,7 +80,7 @@ paths:
       summary: Personnel Authentication & JWT Issuance
       description: |
         Authenticates system personnel using email and password credentials.
-        Returns a signed JWT bearer token containing role and jurisdiction claims (`provinceId`, `districtId`).
+        Returns a signed JWT bearer token containing role and jurisdiction claims (`jurisdictionProvinceId`, `jurisdictionDistrictId`).
       operationId: login
       requestBody:
         required: true
@@ -116,7 +116,7 @@ paths:
       tags:
         - User Management
       summary: List Users with Pagination & Filters (Admin Only)
-      description: Retrieves a paginated collection of system users. Supports filtering by role, status, provinceId, and districtId. Requires `national_admin`.
+      description: Retrieves a paginated collection of system users. Supports filtering by role, status, jurisdictionProvinceId, and jurisdictionDistrictId. Requires `national_admin`.
       operationId: listUsers
       security:
         - BearerAuth: []
@@ -152,18 +152,20 @@ paths:
           schema:
             type: string
             enum: [active, suspended, deleted]
-        - name: provinceId
+        - name: jurisdictionProvinceId
           in: query
-          description: Filter users by province jurisdiction ID
+          description: Filter users by province jurisdiction ID (e.g. lk-wp)
           required: false
           schema:
             type: string
-        - name: districtId
+            example: lk-wp
+        - name: jurisdictionDistrictId
           in: query
-          description: Filter users by district jurisdiction ID
+          description: Filter users by district jurisdiction ID (e.g. dist-colombo)
           required: false
           schema:
             type: string
+            example: dist-colombo
       responses:
         '200':
           description: Paginated collection of users (passwords redacted).
@@ -206,7 +208,7 @@ paths:
               description: URI of the newly created user resource.
               schema:
                 type: string
-                example: /api/v1/users/usr-lk-0005
+                example: /api/v1/users/550e8400-e29b-41d4-a716-446655440000
           content:
             application/json:
               schema:
@@ -249,10 +251,11 @@ paths:
         - name: id
           in: path
           required: true
-          description: User identifier
+          description: User UUID identifier
           schema:
             type: string
-            example: usr-admin-001
+            format: uuid
+            example: 00000000-0000-0000-0000-000000000001
       responses:
         '200':
           description: Atomic user resource representation.
@@ -291,10 +294,11 @@ paths:
         - name: id
           in: path
           required: true
-          description: User identifier
+          description: User UUID identifier
           schema:
             type: string
-            example: usr-op-001
+            format: uuid
+            example: 00000000-0000-0000-0000-000000000005
       requestBody:
         required: true
         content:
@@ -359,7 +363,7 @@ paths:
                 properties:
                   message:
                     type: string
-                    example: User usr-op-001 soft-deleted successfully
+                    example: User 'operator.colombo@slsea.gov.lk' has been soft-deleted successfully
         '401':
           description: Missing or invalid token.
           content:
@@ -412,7 +416,7 @@ paths:
                 properties:
                   message:
                     type: string
-                    example: Password reset successfully for user usr-op-001
+                    example: User password has been reset successfully
         '400':
           description: Invalid password (must meet complexity requirements: 8+ chars, upper, lower, number, special char).
           content:
@@ -705,7 +709,7 @@ paths:
         - name: id
           in: path
           required: true
-          description: Province ID (e.g. prov-western)
+          description: Province ID (e.g. lk-wp)
           schema:
             type: string
         - name: If-None-Match
@@ -946,7 +950,7 @@ paths:
         - name: id
           in: path
           required: true
-          description: Grid substation ID (e.g. sub-kolonnawa)
+          description: Grid substation ID (e.g. sub-kolonnawa-01)
           schema:
             type: string
         - name: If-None-Match
@@ -1453,27 +1457,28 @@ components:
       properties:
         id:
           type: string
-          example: usr-lk-0005
+          format: uuid
+          example: 00000000-0000-0000-0000-000000000005
         email:
           type: string
           format: email
-          example: operator.colombo@energy.gov.lk
+          example: operator.colombo@slsea.gov.lk
         role:
           type: string
           enum: [national_admin, provincial_analyst, district_operator]
           example: district_operator
         fullName:
           type: string
-          example: K. Fernando
+          example: Colombo District Grid Operator
         status:
           type: string
           enum: [active, suspended, deleted]
           example: active
-        provinceId:
+        jurisdictionProvinceId:
           type: string
           nullable: true
-          example: prov-western
-        districtId:
+          example: lk-wp
+        jurisdictionDistrictId:
           type: string
           nullable: true
           example: dist-colombo
@@ -1497,54 +1502,52 @@ components:
         email:
           type: string
           format: email
-          example: operator.colombo@energy.gov.lk
+          example: operator.colombo2@slsea.gov.lk
         password:
           type: string
           format: password
           minLength: 8
-          example: SecureP@ssw0rd2026!
+          example: Slsea@2026!
         role:
           type: string
           enum: [national_admin, provincial_analyst, district_operator]
           example: district_operator
         fullName:
           type: string
-          example: K. Fernando
-        status:
-          type: string
-          enum: [active, suspended]
-          default: active
-        provinceId:
+          example: Colombo Assistant Operator
+        jurisdictionProvinceId:
           type: string
           nullable: true
-          description: Required if role is provincial_analyst or district_operator
-          example: prov-western
-        districtId:
+          description: Required if role is provincial_analyst (e.g. lk-wp). Must be null for national_admin.
+          example: lk-wp
+        jurisdictionDistrictId:
           type: string
           nullable: true
-          description: Required if role is district_operator
+          description: Required if role is district_operator (e.g. dist-colombo). Must be null for national_admin or provincial_analyst.
           example: dist-colombo
 
     UpdateUserRequest:
       type: object
       properties:
-        email:
-          type: string
-          format: email
         fullName:
           type: string
+          example: Colombo Senior Grid Operator
         status:
           type: string
           enum: [active, suspended]
+          example: active
         role:
           type: string
           enum: [national_admin, provincial_analyst, district_operator]
-        provinceId:
+          example: district_operator
+        jurisdictionProvinceId:
           type: string
           nullable: true
-        districtId:
+          example: lk-wp
+        jurisdictionDistrictId:
           type: string
           nullable: true
+          example: dist-colombo
 
     ResetPasswordRequest:
       type: object
@@ -1754,7 +1757,7 @@ components:
       properties:
         id:
           type: string
-          example: prov-western
+          example: lk-wp
         code:
           type: string
           example: WP
@@ -1780,16 +1783,16 @@ components:
           example: dist-colombo
         code:
           type: string
-          example: COL
+          example: CMB
         name:
           type: string
           example: Colombo
         provinceId:
           type: string
-          example: prov-western
+          example: lk-wp
         province_id:
           type: string
-          example: prov-western
+          example: lk-wp
         createdAt:
           type: string
           format: date-time
@@ -1803,15 +1806,14 @@ components:
         - name
         - districtId
         - capacityMva
-        - voltageKv
         - createdAt
       properties:
         id:
           type: string
-          example: sub-kolonnawa
+          example: sub-kolonnawa-01
         code:
           type: string
-          example: KLN
+          example: KLN-GS-01
         name:
           type: string
           example: Kolonnawa Grid Substation
@@ -1823,16 +1825,10 @@ components:
           example: dist-colombo
         capacityMva:
           type: number
-          example: 60.00
+          example: 120.00
         capacity_mva:
           type: number
-          example: 60.00
-        voltageKv:
-          type: string
-          example: 132/33 kV
-        voltage_kv:
-          type: string
-          example: 132/33 kV
+          example: 120.00
         createdAt:
           type: string
           format: date-time
@@ -1842,10 +1838,9 @@ components:
       type: object
       required:
         - id
-        - code
         - name
         - substationId
-        - capacityKw
+        - installedCapacityKw
         - meterId
         - inverterId
         - commissionedDate
@@ -1856,44 +1851,41 @@ components:
         id:
           type: string
           example: inst-lk-0001
-        code:
-          type: string
-          example: SL-WP-COL-0001
         name:
           type: string
-          example: Colombo Commercial Rooftop PV 1
+          example: Solar Asset Kolonnawa #1
         substationId:
           type: string
-          example: sub-kolonnawa
+          example: sub-kolonnawa-01
         substation_id:
           type: string
-          example: sub-kolonnawa
-        capacityKw:
-          type: number
-          example: 5.00
-        capacity_kw:
-          type: number
-          example: 5.00
+          example: sub-kolonnawa-01
+        installedCapacityKw:
+          type: string
+          example: '5.00'
+        installed_capacity_kw:
+          type: string
+          example: '5.00'
         meterId:
           type: string
-          example: MTR-LK-0001
+          example: MTR-SLSEA-0001
         meter_id:
           type: string
-          example: MTR-LK-0001
+          example: MTR-SLSEA-0001
         inverterId:
           type: string
-          example: INV-LK-0001
+          example: HUAWEI-SUN2000-01
         inverter_id:
           type: string
-          example: INV-LK-0001
+          example: HUAWEI-SUN2000-01
         commissionedDate:
           type: string
           format: date
-          example: '2024-01-15'
+          example: '2024-02-02'
         commissioned_date:
           type: string
           format: date
-          example: '2024-01-15'
+          example: '2024-02-02'
         status:
           type: string
           enum: [active, maintenance, decommissioned]
@@ -1911,9 +1903,8 @@ components:
       type: object
       required:
         - id
-        - code
         - name
-        - capacityKw
+        - installedCapacityKw
         - meterId
         - inverterId
         - commissionedDate
@@ -1921,30 +1912,27 @@ components:
         - substation
         - district
         - province
-        - operationalStatus
+        - operationalSummary
       properties:
         id:
           type: string
           example: inst-lk-0001
-        code:
-          type: string
-          example: SL-WP-COL-0001
         name:
           type: string
-          example: Colombo Commercial Rooftop PV 1
-        capacityKw:
-          type: number
-          example: 5.00
+          example: Solar Asset Kolonnawa #1
+        installedCapacityKw:
+          type: string
+          example: '5.00'
         meterId:
           type: string
-          example: MTR-LK-0001
+          example: MTR-SLSEA-0001
         inverterId:
           type: string
-          example: INV-LK-0001
+          example: HUAWEI-SUN2000-01
         commissionedDate:
           type: string
           format: date
-          example: '2024-01-15'
+          example: '2024-02-02'
         status:
           type: string
           example: active
@@ -1954,22 +1942,44 @@ components:
           $ref: '#/components/schemas/DistrictResponse'
         province:
           $ref: '#/components/schemas/ProvinceResponse'
-        operationalStatus:
+        operationalSummary:
           type: object
+          required:
+            - status
           properties:
             status:
               type: string
-              enum: [online, offline]
+              enum: [online, degraded, offline]
               example: online
-            lastReadingAt:
+            ageMinutes:
+              type: integer
+              nullable: true
+              example: 15
+            lastReadingTimestamp:
               type: string
               format: date-time
               nullable: true
               example: '2026-09-25T07:15:00.000Z'
-            currentPowerKw:
+            latestPowerKw:
               type: number
               nullable: true
-              example: 4.85
+              example: 4.12
+            latestEnergyKwh:
+              type: number
+              nullable: true
+              example: 1820.50
+            latestVoltage:
+              type: number
+              nullable: true
+              example: 231.2
+            latestCurrentA:
+              type: number
+              nullable: true
+              example: 17.8
+            latestFrequencyHz:
+              type: number
+              nullable: true
+              example: 50.01
 
     LastReadingResponse:
       type: object
@@ -1980,19 +1990,25 @@ components:
         installationId:
           type: string
           example: inst-lk-0001
+        installationName:
+          type: string
+          example: Solar Asset Kolonnawa #1
+        installedCapacityKw:
+          type: string
+          example: '5.00'
         operationalStatus:
           type: string
-          enum: [online, offline]
+          enum: [online, degraded, offline]
           example: online
-        operational_status:
-          type: string
-          enum: [online, offline]
-          example: online
-        lastReading:
-          allOf:
-            - $ref: '#/components/schemas/ReadingResponse'
+        ageMinutes:
+          type: integer
           nullable: true
-        last_reading:
+          example: 15
+        evaluatedAt:
+          type: string
+          format: date-time
+          example: '2026-10-28T09:15:00.000Z'
+        reading:
           allOf:
             - $ref: '#/components/schemas/ReadingResponse'
           nullable: true
@@ -2026,10 +2042,10 @@ components:
           example: Colombo
         province_id:
           type: string
-          example: prov-western
+          example: lk-wp
         provinceId:
           type: string
-          example: prov-western
+          example: lk-wp
         province_name:
           type: string
           example: Western
