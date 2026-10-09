@@ -16,8 +16,8 @@ info:
     - **RFC 7232 / RFC 9110 Caching**: Strong SHA-256 `ETag` and `Last-Modified` validation with `304 Not Modified` conditional responses.
   contact:
     name: SLSEA Grid Integration Division
-    email: api-support@energy.gov.lk
-    url: https://www.energy.gov.lk
+    email: api-support@slsea.gov.lk
+    url: https://www.slsea.gov.lk
   license:
     name: Proprietary / Academic Evaluation (NB6007CEM)
 
@@ -1320,7 +1320,7 @@ components:
         type:
           type: string
           format: uri
-          example: https://lumina-grid.energy.gov.lk/errors/not-found
+          example: https://lumina-grid.slsea.gov.lk/errors/not-found
         title:
           type: string
           example: Resource Not Found
@@ -1392,11 +1392,12 @@ components:
         email:
           type: string
           format: email
-          example: admin@energy.gov.lk
+          example: admin@slsea.gov.lk
         password:
           type: string
           format: password
-          example: Admin@SLSEA2026!
+          minLength: 8
+          example: Slsea@2026!
 
     AuthUser:
       type: object
@@ -1408,22 +1409,24 @@ components:
       properties:
         id:
           type: string
-          example: usr-admin-001
+          format: uuid
+          example: 00000000-0000-0000-0000-000000000001
         email:
           type: string
-          example: admin@energy.gov.lk
+          format: email
+          example: admin@slsea.gov.lk
         role:
           type: string
           enum: [national_admin, provincial_analyst, district_operator]
           example: national_admin
         fullName:
           type: string
-          example: Dr. Rohan Perera
-        provinceId:
+          example: National Grid Controller
+        jurisdictionProvinceId:
           type: string
           nullable: true
           example: null
-        districtId:
+        jurisdictionDistrictId:
           type: string
           nullable: true
           example: null
@@ -1432,12 +1435,16 @@ components:
       type: object
       required:
         - token
+        - tokenType
         - user
       properties:
         token:
           type: string
-          description: Signed JWT Bearer token valid for 8 hours.
+          description: Signed JWT Bearer token valid for 24 hours.
           example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        tokenType:
+          type: string
+          example: Bearer
         user:
           $ref: '#/components/schemas/AuthUser'
 
