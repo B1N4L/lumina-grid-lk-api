@@ -1,0 +1,288 @@
+import { eq, and, asc, desc, sql } from 'drizzle-orm';
+import { db, solarInstallations, gridSubstations, districts, provinces, generationReadings } from '../db/index.js';
+import { NotFoundError } from '../errors/app-error.js';
+import { UserTokenPayload } from '../types/auth.types.js';
+import { InstallationQuery } from '../schemas/hierarchy.schema.js';
+
+export interface PaginatedInstallationsResult {
+  installations: Array<{
+    id: string;
+    substationId: string;
+    name: string;
+    meterId: string;
+    inverterId: string;
+    installedCapacityKw: string;
+    commissionedDate: string;
+    status: string;
+    createdAt: Date;
+    updatedAt: Date;
+    substationName: string;
+    districtId: string;
+    districtName: string;
+    provinceId: string;
+  }>;
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
+export type OperationalStatus = 'online' | 'degraded' | 'offline';
+
+export function calculateOperationalStatus(lastReadingDate?: Date | null): {
+  status: OperationalStatus;
+  ageMinutes: number | null;
+} {
+  if (!lastReadingDate) {
+    return { status: 'offline', ageMinutes: null };
+  }
+
+  const ageMs = Date.now() - new Date(lastReadingDate).getTime();
+  const ageMinutes = Math.max(0, Math.floor(ageMs / (1000 * 60)));
+
+  if (ageMinutes <= 30) {
+    return { status: 'online', ageMinutes };
+  }
+  if (ageMinutes <= 120) {
+    return { status: 'degraded', ageMinutes };
+  }
+  return { status: 'offline', ageMinutes };
+}
+
+export class InstallationService {
+  /**
+   * List installations with pagination and multi-attribute filters,
+   * automatically scoped by the user's ABAC jurisdiction.
+   * Strictly redacts internal device secrets (apiKeyHash).
+   */
+  static async listInstallations(
+    query: InstallationQuery,
+    user: UserTokenPayload
+  ): Promise<PaginatedInstallationsResult> {
+    const page = Math.max(1, query.page || 1);
+    const limit = Math.min(100, Math.max(1, query.limit || 20));
+    const offset = (page - 1) * limit;
+
+    const conditions = [];
+
+    // Installation operational status filter
+    if (query.status) {
+      conditions.push(eq(solarInstallations.status, query.status));
+    }
+
+    // Determine effective province scope
+    let effectiveProvince: string | undefined;
+    if (user.role === 'provincial_analyst') {
+      effectiveProvince = user.jurisdictionProvinceId ?? undefined;
+    } else if (user.role === 'national_admin') {
+      effectiveProvince = query.province;
+    }
+
+    if (effectiveProvince) {
+      conditions.push(eq(districts.provinceId, effectiveProvince));
+    }
+
+    // Determine effective district scope
+    let effectiveDistrict: string | undefined;
+    if (user.role === 'district_operator') {
+      effectiveDistrict = user.jurisdictionDistrictId ?? undefined;
+    } else {
+      effectiveDistrict = query.district;
+    }
+
+    if (effectiveDistrict) {
+      conditions.push(eq(gridSubstations.districtId, effectiveDistrict));
+    }
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    const countQuery = db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(solarInstallations)
+      .innerJoin(gridSubstations, eq(solarInstallations.substationId, gridSubstations.id))
+      .innerJoin(districts, eq(gridSubstations.districtId, districts.id));
+
+    const dataQuery = db
+      .select({
+        id: solarInstallations.id,
+        substationId: solarInstallations.substationId,
+        name: solarInstallations.name,
+        meterId: solarInstallations.meterId,
+        inverterId: solarInstallations.inverterId,
+        installedCapacityKw: solarInstallations.installedCapacityKw,
+        commissionedDate: solarInstallations.commissionedDate,
+        status: solarInstallations.status,
+        createdAt: solarInstallations.createdAt,
+        updatedAt: solarInstallations.updatedAt,
+        substationName: gridSubstations.name,
+        districtId: districts.id,
+        districtName: districts.name,
+        provinceId: districts.provinceId,
+      })
+      .from(solarInstallations)
+      .innerJoin(gridSubstations, eq(solarInstallations.substationId, gridSubstations.id))
+      .innerJoin(districts, eq(gridSubstations.districtId, districts.id))
+      .orderBy(asc(solarInstallations.id))
+      .limit(limit)
+      .offset(offset);
+
+    if (whereClause) {
+      countQuery.where(whereClause);
+      dataQuery.where(whereClause);
+    }
+
+    const [countResult, rows] = await Promise.all([countQuery, dataQuery]);
+
+    const total = countResult[0]?.count ?? 0;
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    return {
+      installations: rows,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+      },
+    };
+  }
+
+  /**
+   * Get single installation atomic resource metadata by ID,
+   * with related grid hierarchy metadata. Redacts apiKeyHash.
+   */
+  static async getInstallationById(id: string) {
+    const [installation] = await db
+      .select({
+        id: solarInstallations.id,
+        substationId: solarInstallations.substationId,
+        name: solarInstallations.name,
+        meterId: solarInstallations.meterId,
+        inverterId: solarInstallations.inverterId,
+        installedCapacityKw: solarInstallations.installedCapacityKw,
+        commissionedDate: solarInstallations.commissionedDate,
+        status: solarInstallations.status,
+        createdAt: solarInstallations.createdAt,
+        updatedAt: solarInstallations.updatedAt,
+        substation: {
+          id: gridSubstations.id,
+          name: gridSubstations.name,
+          code: gridSubstations.code,
+          capacityMva: gridSubstations.capacityMva,
+        },
+        district: {
+          id: districts.id,
+          name: districts.name,
+          code: districts.code,
+        },
+        province: {
+          id: provinces.id,
+          name: provinces.name,
+          code: provinces.code,
+        },
+      })
+      .from(solarInstallations)
+      .innerJoin(gridSubstations, eq(solarInstallations.substationId, gridSubstations.id))
+      .innerJoin(districts, eq(gridSubstations.districtId, districts.id))
+      .innerJoin(provinces, eq(districts.provinceId, provinces.id))
+      .where(eq(solarInstallations.id, id))
+      .limit(1);
+
+    if (!installation) {
+      throw new NotFoundError(`Solar installation '${id}' was not found`);
+    }
+
+    return installation;
+  }
+
+  /**
+   * Get composite installation resource bundling installation details,
+   * substation metadata, parent district/province details, and live operational summary.
+   * Redacts internal device secrets (apiKeyHash).
+   */
+  static async getInstallationComposite(id: string) {
+    const installation = await this.getInstallationById(id);
+
+    // Fetch the single most recent generation reading using indexed scan
+    const [latestReading] = await db
+      .select()
+      .from(generationReadings)
+      .where(eq(generationReadings.installationId, id))
+      .orderBy(desc(generationReadings.timestamp))
+      .limit(1);
+
+    const { status: operationalStatus, ageMinutes } = calculateOperationalStatus(
+      latestReading ? new Date(latestReading.timestamp) : null
+    );
+
+    return {
+      ...installation,
+      operationalSummary: {
+        status: operationalStatus,
+        lastReadingTimestamp: latestReading ? latestReading.timestamp : null,
+        ageMinutes,
+        latestPowerKw: latestReading ? Number(latestReading.powerKw) : null,
+        latestEnergyKwh: latestReading ? Number(latestReading.energyKwh) : null,
+        latestVoltage: latestReading ? Number(latestReading.voltage) : null,
+        latestCurrentA: latestReading ? Number(latestReading.currentA) : null,
+        latestFrequencyHz: latestReading ? Number(latestReading.frequencyHz) : null,
+      },
+    };
+  }
+
+  /**
+   * Get operational last-reading derived resource for an installation.
+   * Scans latest reading using composite index (installation_id, timestamp DESC)
+   * and derives site operational status (online, degraded, offline).
+   */
+  static async getInstallationLastReading(id: string) {
+    const [installation] = await db
+      .select({
+        id: solarInstallations.id,
+        name: solarInstallations.name,
+        installedCapacityKw: solarInstallations.installedCapacityKw,
+      })
+      .from(solarInstallations)
+      .where(eq(solarInstallations.id, id))
+      .limit(1);
+
+    if (!installation) {
+      throw new NotFoundError(`Solar installation '${id}' was not found`);
+    }
+
+    const [latestReading] = await db
+      .select()
+      .from(generationReadings)
+      .where(eq(generationReadings.installationId, id))
+      .orderBy(desc(generationReadings.timestamp))
+      .limit(1);
+
+    const { status: operationalStatus, ageMinutes } = calculateOperationalStatus(
+      latestReading ? new Date(latestReading.timestamp) : null
+    );
+
+    return {
+      installationId: installation.id,
+      installationName: installation.name,
+      installedCapacityKw: installation.installedCapacityKw,
+      operationalStatus,
+      ageMinutes,
+      evaluatedAt: new Date().toISOString(),
+      reading: latestReading
+        ? {
+            id: latestReading.id,
+            timestamp: latestReading.timestamp,
+            powerKw: Number(latestReading.powerKw),
+            energyKwh: Number(latestReading.energyKwh),
+            voltage: Number(latestReading.voltage),
+            currentA: Number(latestReading.currentA),
+            frequencyHz: Number(latestReading.frequencyHz),
+            createdAt: latestReading.createdAt,
+          }
+        : null,
+    };
+  }
+}
+
